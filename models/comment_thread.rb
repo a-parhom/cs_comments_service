@@ -1,14 +1,17 @@
-# -*- coding: utf-8 -*-
-require 'new_relic/agent/method_tracer'
+require 'logger'
+require_relative 'concerns/searchable'
 require_relative 'content'
+require_relative 'constants'
+
+logger = Logger.new(STDOUT)
+logger.level = Logger::WARN
+
 
 class CommentThread < Content
-
   include Mongoid::Timestamps
   include Mongoid::Attributes::Dynamic
   include ActiveModel::MassAssignmentSecurity
-  include Tire::Model::Search
-  include Tire::Model::Callbacks
+  include Searchable
   extend Enumerize
 
   voteable self, :up => +1, :down => -1
@@ -29,9 +32,9 @@ class CommentThread < Content
   field :last_activity_at, type: Time
   field :group_id, type: Integer
   field :pinned, type: Boolean
+  field :retired_username, type: String, default: nil
 
   index({author_id: 1, course_id: 1})
-
 
   index_name Content::ES_INDEX_NAME
 
@@ -41,10 +44,8 @@ class CommentThread < Content
     indexes :created_at, type: :date, included_in_all: false
     indexes :updated_at, type: :date, included_in_all: false
     indexes :last_activity_at, type: :date, included_in_all: false
-
     indexes :comment_count, type: :integer, included_in_all: false
     indexes :votes_point, type: :integer, as: 'votes_point', included_in_all: false
-
     indexes :context, type: :string, index: :not_analyzed, included_in_all: false
     indexes :course_id, type: :string, index: :not_analyzed, included_in_all: false
     indexes :commentable_id, type: :string, index: :not_analyzed, included_in_all: false
@@ -58,7 +59,7 @@ class CommentThread < Content
   has_many :comments, dependent: :destroy # Use destroy to invoke callback on the top-level comments
   has_many :activities, autosave: true
 
-  attr_accessible :title, :body, :course_id, :commentable_id, :anonymous, :anonymous_to_peers, :closed, :thread_type
+  attr_accessible :title, :body, :course_id, :commentable_id, :anonymous, :anonymous_to_peers, :closed, :thread_type, :retired_username
 
   validates_presence_of :thread_type
   validates_presence_of :context
@@ -69,7 +70,6 @@ class CommentThread < Content
   validates_presence_of :author, autosave: false
 
   before_create :set_last_activity_at
-  before_update :set_last_activity_at, :unless => lambda { closed_changed? }
   after_update :clear_endorsements
   before_destroy :destroy_subscriptions
 
@@ -122,18 +122,18 @@ class CommentThread < Content
   end
 
   def to_hash(params={})
-    as_document.slice(*%w[thread_type title body course_id anonymous anonymous_to_peers commentable_id created_at updated_at at_position_list closed context last_activity_at])
-        .merge('id' => _id,
-               'user_id' => author_id,
-               'username' => author_username,
-               'votes' => votes.slice(*%w[count up_count down_count point]),
-               'abuse_flaggers' => abuse_flaggers,
-               'tags' => [],
-               'type' => 'thread',
-               'group_id' => group_id,
-               'pinned' => pinned?,
-               'comments_count' => comment_count)
-
+    as_document
+      .slice(THREAD_TYPE, TITLE, BODY, COURSE_ID, ANONYMOUS, ANONYMOUS_TO_PEERS, COMMENTABLE_ID, CREATED_AT, UPDATED_AT, AT_POSITION_LIST, CLOSED, CONTEXT, LAST_ACTIVITY_AT)
+      .merge!("id" => _id,
+              "user_id" => author_id,
+              "username" => author_username,
+              "votes" => votes.slice(COUNT, UP_COUNT, DOWN_COUNT, POINT),
+              "abuse_flaggers" => abuse_flaggers,
+              "tags" => [],
+              "type" => THREAD,
+              "group_id" => group_id,
+              "pinned" => pinned?,
+              "comments_count" => comment_count)
   end
 
   def comment_thread_id
@@ -161,5 +161,13 @@ class CommentThread < Content
 
   def destroy_subscriptions
     subscriptions.delete_all
+  end
+
+  begin
+    require 'new_relic/agent/method_tracer'
+    include ::NewRelic::Agent::MethodTracer
+    add_method_tracer :to_hash
+  rescue LoadError
+    logger.warn "NewRelic agent library not installed"
   end
 end

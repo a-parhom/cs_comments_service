@@ -1,5 +1,5 @@
+require 'logger'
 require_relative 'thread_utils'
-require 'new_relic/agent/method_tracer'
 
 class ThreadPresenter
 
@@ -23,7 +23,7 @@ class ThreadPresenter
     @is_endorsed = is_endorsed
   end
 
-  def to_hash with_responses=false, resp_skip=0, resp_limit=nil, recursive=true
+  def to_hash(with_responses=false, resp_skip=0, resp_limit=nil, recursive=true)
     raise ArgumentError unless resp_skip >= 0
     raise ArgumentError unless resp_limit.nil? or resp_limit >= 1
     h = @thread.to_hash
@@ -97,7 +97,7 @@ class ThreadPresenter
     top_level = []
     ancestry = []
     content.each do |item|
-      item_hash = item.to_hash.merge("children" => [])
+      item_hash = item.to_hash.merge!("children" => [])
       if item.parent_id.nil?
         top_level << item_hash
         ancestry = [item_hash]
@@ -119,9 +119,15 @@ class ThreadPresenter
     end
     top_level
   end
-
-  include ::NewRelic::Agent::MethodTracer
-  add_method_tracer :to_hash
-  add_method_tracer :merge_response_content
+  logger = Logger.new(STDOUT)
+  logger.level = Logger::WARN
+  begin
+    require 'new_relic/agent/method_tracer'
+    include ::NewRelic::Agent::MethodTracer
+    add_method_tracer :to_hash
+    add_method_tracer :merge_response_content
+  rescue LoadError
+    logger.warn "NewRelic agent library not installed"
+  end
 
 end

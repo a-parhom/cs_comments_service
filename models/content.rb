@@ -1,7 +1,9 @@
 class Content
-
   include Mongoid::Document
   include Mongo::Voteable
+
+  ES_INDEX_NAME = 'content'
+
 
   field :visible, type: Boolean, default: true
   field :abuse_flaggers, type: Array, default: []
@@ -15,16 +17,6 @@ class Content
   index({comment_thread_id: 1, sk: 1}, {sparse: true})
   index({comment_thread_id: 1, endorsed: 1}, {sparse: true})
   index({commentable_id: 1}, {sparse: true, background: true})
-
-  ES_INDEX_NAME = 'content'
-
-  def self.put_search_index_mapping(idx=nil)
-    idx ||= self.tire.index
-    success = idx.mapping(self.tire.document_type, {:properties => self.tire.mapping})
-    unless success
-      logger.warn "WARNING! could not apply search index mapping for #{self.name}"
-    end
-  end
 
   before_save :set_username
 
@@ -71,7 +63,7 @@ class Content
 
   def self.summary what
     #take a hash of criteria (what) and return a hash of hashes
-    #of total users, votes, comments, endorsements, 
+    #of total users, votes, comments, endorsements,
 
     answer = {}
     vote_count = 0
@@ -109,6 +101,6 @@ class Content
 
   def set_username
     # avoid having to look this attribute up later, since it does not change
-    self.author_username = author.username
+    self.author_username = self.retired_username ? self.retired_username : author.username
   end
 end
